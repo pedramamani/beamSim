@@ -36,23 +36,28 @@ class MonoBeam:
         Rotate the beam by applying a linear phase in position.
         :param α: angle to rotate by
         :raises RuntimeError: if phase aliasing occurs upon rotation
+        :return: MonoBeam object for chaining
         """
         if self.dx >= (self.λ / (2 * np.sin(np.abs(α))) if α != 0 else np.inf):
             raise RuntimeError(ERROR.ROTATION.format(
                 int(np.ceil(np.log2(self.Nx * self.dx * 2 * np.sin(np.abs(α)) / self.λ)))))
-        self._add_phase(-np.tan(α) * self.xs)
+        self._add_phase(np.tan(α) * self.xs)
+        return self
 
     def mask(self, M):
         """
         Apply a complex mask to modulate the beam amplitude and phase.
         :param M: mask function that maps a given position to its complex multiplier
+        :return: MonoBeam object for chaining
         """
         self.E *= np.asarray([M(x) for x in self.xs])
+        return self
 
     def propagate(self, Δz):
         """
         Propagate the beam in free space.
         :param Δz: distance to propagate by
+        :return: MonoBeam object for chaining
         """
         zR = π * self.w0 ** 2 / self.λ
         dw = self.z - self.z0
@@ -73,11 +78,13 @@ class MonoBeam:
             self._propagate_w2s(Δz=Δz + dw)
             self.Rp = Δz + dw
         collect()
+        return self
 
     def lens(self, f):
         """
         Simulate the effect of a thin lens on the beam by applying a quadratic phase in position.
         :param f: focal length of the lens (positive/negative for a convex/concave lens)
+        :return: MonoBeam object for chaining
         """
         dw = self._nudge(self.z - self.z0, 0)
         zR = π * self.w0 ** 2 / self.λ
@@ -113,11 +120,12 @@ class MonoBeam:
         else:
             a = 1 / f - 1 / self.Rp + 1 / Rp
 
-        self._add_phase(Δz=-np.abs(self.xs) ** 2 * a / 2)  # fix: shouldn't this be a +?
+        self._add_phase(Δz=-np.abs(self.xs) ** 2 * a / 2)
         self.z0 = self.z - dw
         self.w0 = w0
         self.Rp = Rp
         collect()
+        return self
 
     def phase_section(self):
         """
@@ -144,36 +152,41 @@ class MonoBeam:
         """
         Plot beam phase profile (cross-section plane may be spherical)
         :param title: title of the plot
+        :return: MonoBeam object for chaining
         """
-        self._plot_profile(ys=self.phase_section(), title=title, label=PLOT.PHASE_LABEL)
+        self._plot_section(ys=self.phase_section(), title=title, label=PLOT.PHASE_LABEL)
+        return self
 
     def plot_amplitude_section(self, title=PLOT.AMPLITUDE_TITLE):
         """
         Plot beam amplitude profile (cross-section plane may be spherical)
         :param title: title of the plot
+        :return: MonoBeam object for chaining
         """
-        self._plot_profile(ys=self.amplitude_section(), title=title, label=PLOT.AMPLITUDE_LABEL)
+        self._plot_section(ys=self.amplitude_section() * PLOT.AMPLITUDE_SCALE, title=title, label=PLOT.AMPLITUDE_LABEL)
+        return self
 
     def plot_intensity_section(self, title=PLOT.INTENSITY_TITLE):
         """
         Plot beam intensity profile (cross-section plane may be spherical)
         :param title: title of the plot
+        :return: MonoBeam object for chaining
         """
-        self._plot_profile(ys=self.intensity_section(), title=title, label=PLOT.INTENSITY_LABEL)
+        self._plot_section(ys=self.intensity_section() * PLOT.INTENSITY_SCALE, title=title, label=PLOT.INTENSITY_LABEL)
+        return self
 
     def _add_phase(self, Δz):
-        self.E *= np.where(self.E != 0, np.exp(2 * π * i * Δz / self.λ), 0)
+        self.E *= np.where(self.E != 0, np.exp(-2 * π * i * Δz / self.λ), 0)
 
     def _propagate_p2p(self, Δz):
         if np.abs(Δz) < δz:
             return
 
         self._compute_fftw(direction='FFTW_FORWARD')
-        inverse_squared = ((np.arange(self.Nx) - self.Nx / 2) / (self.Nx * self.dx)) ** 2
-        inverse_squared = np.roll(inverse_squared, self.Nx // 2)
-        self.E *= np.exp((-complex(0, 1) * π * self.λ * Δz) * inverse_squared)
+        inverse_squared = np.roll(((np.arange(self.Nx) - self.Nx / 2) / (self.Nx * self.dx)) ** 2, self.Nx // 2)
+        self.E *= np.exp((complex(0, 1) * π * self.λ * Δz) * inverse_squared)
         self._compute_fftw(direction='FFTW_BACKWARD')
-        self._add_phase(Δz=Δz)
+        # self._add_phase(Δz=Δz)
         self.z += Δz
 
     def _propagate_w2s(self, Δz):
@@ -220,11 +233,11 @@ class MonoBeam:
             return y
         return x
 
-    def _plot_profile(self, ys, title, label):
+    def _plot_section(self, ys, title, label):
         if np.isinf(self.Rp):
             print(PLOT.LOG_PLANAR.format(title))
         else:
-            print(PLOT.LOG_SPHERICAL.format(title, self.Rp))
+            print(PLOT.LOG_SPHERICAL.format(title, self.Rp * 1E2))
 
         plt.plot(np.roll(self.xs, self.Nx // 2) * PLOT.POSITION_SCALE, ys)
         plt.title(title)

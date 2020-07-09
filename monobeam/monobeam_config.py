@@ -36,12 +36,14 @@ class PLOT:
 
     AMPLITUDE_TITLE = 'Amplitude Profile'
     AMPLITUDE_LABEL = 'A (V/m)'
+    AMPLITUDE_SCALE = 1E0
 
     INTENSITY_TITLE = 'Intensity Profile'
-    INTENSITY_LABEL = 'I (W/m²)'
+    INTENSITY_LABEL = 'I (MW/m²)'
+    INTENSITY_SCALE = 1E-6
 
     LOG_PLANAR = 'Plotting "{}" on planar cross-section.'
-    LOG_SPHERICAL = 'Plotting "{}" on spherical cross-section with curvature {:.2f}m.'
+    LOG_SPHERICAL = 'Plotting "{}" on spherical cross-section with curvature {:.1f}cm.'
 
 
 

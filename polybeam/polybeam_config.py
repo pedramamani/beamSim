@@ -4,10 +4,10 @@ from os import path
 c = 2.9979E8
 μ0 = 1.2566E-6
 
-fν = 32
-fx = 8
+fν = 16
+fx = 16
 DEFAULT_Nν = 2 ** 8
-DEFAULT_Nx = 2 ** 15
+DEFAULT_Nx = 2 ** 16
 DEFAULT_I0 = 1E9
 
 ASSETS_DIR = Path(path.dirname(__file__)) / 'polybeam_assets'
@@ -15,7 +15,8 @@ WISDOM_FILE = 'pyfftw_wisdom_{}'
 
 
 class ERROR:
-    TRANSFORM = 'Transform failed since one or more of the wavefronts are not planar.'
+    TRANSFORM = 'Transform failed since some of the cross-sections are not planar.'
+    SECTION = 'Cannot plot since some of the cross-sections are not planar.'
     DISPERSION = 'Some frequency components don\'t have a first-order diffraction for these grating parameters.'
 
 
