@@ -1,0 +1,4 @@
+seaborn>=0.10.1
+numpy>=1.19.0
+matplotlib>=3.2.2
+pyfftw>=0.12.0
