@@ -2,13 +2,15 @@ from pathlib import Path
 from os import path
 
 c = 2.9979E8
+i = complex(0, 1)
+π = 3.1416
 μ0 = 1.2566E-6
 
 fν = 16
 fx = 16
 DEFAULT_Nν = 2 ** 8
 DEFAULT_Nx = 2 ** 16
-DEFAULT_I0 = 1E9
+DEFAULT_I0 = 1E12
 
 ASSETS_DIR = Path(path.dirname(__file__)) / 'polybeam_assets'
 WISDOM_FILE = 'pyfftw_wisdom_{}'
@@ -38,5 +40,11 @@ class PLOT:
     AMPLITUDE_SCALE = 1E0
 
     INTENSITY_TITLE = 'Intensity Profile'
-    INTENSITY_LABEL = 'I (MW/m²)'
-    INTENSITY_SCALE = 1E-6
+    INTENSITY_LABEL = 'I (GW/m²)'
+    INTENSITY_SCALE = 1E-9
+
+    @staticmethod
+    def SAVE_TIME(title): return '-'.join(title.lower().split() + ['time'])
+
+    @staticmethod
+    def SAVE_FREQ(title): return '-'.join(title.lower().split() + ['freq'])
