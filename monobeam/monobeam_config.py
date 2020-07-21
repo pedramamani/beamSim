@@ -1,23 +1,30 @@
 from pathlib import Path
 from os import path
 
-c = 2.9979E8
 i = complex(0, 1)
-π = 3.1416
+c = 2.9979E8
+π = 3.14159
 μ0 = 1.2566E-6
 
-fx = 32
-fR = 2  # todo: maybe should be set dynamically
+ηx = 32
+ηR = 2  # todo: should be set dynamically?
 δz = 1E-4
 DEFAULT_Nx = 2 ** 16
-DEFAULT_I0 = 1E9
+DEFAULT_I0 = 1  # (TW/m²)
 
 ASSETS_DIR = Path(path.dirname(__file__)) / 'monobeam_assets'
 WISDOM_FILE = 'pyfftw_wisdom_{}'
 
 
+class PRE:
+    c = 1E-2
+    m = 1E-3
+    T = 1E12
+    G = 1E9
+
+
 class ERROR:
-    ROTATION = 'Rotation results in phase aliasing. Decrease rotation angle or increase sampling to 2^{:d}.'
+    ROTATION = 'Rotation introduces phase aliasing. Decrease rotation angle or increase sampling to 2^{:.0f}.'
 
 
 class PROPAGATOR:
@@ -29,18 +36,18 @@ class PROPAGATOR:
 
 class PLOT:
     POSITION_LABEL = 'x (mm)'
-    POSITION_SCALE = 1E3
+    POSITION_SCALE = 1 / PRE.m
 
     PHASE_TITLE = 'Phase Profile'
     PHASE_LABEL = 'φ (rad)'
 
     AMPLITUDE_TITLE = 'Amplitude Profile'
     AMPLITUDE_LABEL = 'A (V/m)'
-    AMPLITUDE_SCALE = 1E0
+    AMPLITUDE_SCALE = 1
 
     INTENSITY_TITLE = 'Intensity Profile'
-    INTENSITY_LABEL = 'I (MW/m²)'
-    INTENSITY_SCALE = 1E-6
+    INTENSITY_LABEL = 'I (GW/m²)'
+    INTENSITY_SCALE = 1 / PRE.G
 
     LOG_PLANAR = 'Plotting "{}" on planar cross-section.'
     LOG_SPHERICAL = 'Plotting "{}" on spherical cross-section with curvature {:.1f}cm.'
