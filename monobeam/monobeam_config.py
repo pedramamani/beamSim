@@ -25,7 +25,8 @@ class PRE:
 
 
 class ERROR:
-    rotation = 'Rotation introduces phase aliasing. Decrease rotation angle or increase position sampling to 2^{:.0f}.'
+    rotate_aliasing = 'Rotation causes phase aliasing. Make any of the following changes to relieve:\n' \
+                      '|α| < {:.1f}° or Nx >= 2^{:.0f} or ηx < {:.1f}.'
 
 
 class PROPAGATOR:

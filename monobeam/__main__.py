@@ -2,7 +2,7 @@ from monobeam import MonoBeam
 
 
 def shaper_4f_routine():
-    beam = MonoBeam(f=375, Δx=3, Nx=2 ** 14)
+    beam = MonoBeam(f=375, Δx=3, ηx=10, Nx=2 ** 12)
     beam.rotate(α=3)
     beam.plot_intensity(title='Input Intensity').plot_phase(title='Input Phase')
 

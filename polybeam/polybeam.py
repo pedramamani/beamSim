@@ -150,12 +150,13 @@ class PolyBeam:
         :param d: grating groove density (1/mm)
         :param α: incident beam angle (°)
         :raises RuntimeError: if first order diffraction does not exist for some frequencies
+        :raises RuntimeError: if phase aliasing occurs upon dispersion
         :return: PolyBeam object for chaining
         """
         δ = PRE.m / d
         α = np.deg2rad(α)
         if np.isnan(np.arcsin(c / (self.fs[0] * δ) - np.sin(α)) - np.arcsin(c / (self.fs[-1] * δ) - np.sin(α))):
-            raise RuntimeError(ERROR.dispersion)
+            raise RuntimeError(ERROR.disperse)
         θ0 = np.arcsin(c / (self.f0 * δ) - np.sin(α))
         for beam, f in zip(self.beams, self.fs):
             beam.rotate(α=np.rad2deg(np.arcsin(c / (f * δ) - np.sin(α)) - θ0))
@@ -164,10 +165,16 @@ class PolyBeam:
     def chirp(self, α):
         """
         Apply a quadratic phase shift in frequency to chirp the beam.
-        :param α: the chirp rate (fs²)
+        :param α: the chirp rate (ps²)
         :return: PolyBeam object for chaining
         """
-        α *= PRE.f ** 2
+        α *= PRE.p ** 2
+        if self.Nf < 4 * π * α * self.Df ** 2:  # require: 4πα Df^2 < Nf
+            raise RuntimeError(ERROR.chirp_alias.format(
+                self.Nf / (4 * π * self.Df ** 2) / PRE.f ** 2,
+                np.ceil(np.log2(4 * π * α * self.Df ** 2)),
+                np.sqrt(self.Nf / (4 * π * α)) / self.Δf))
+
         for f, beam in zip(self.fs, self.beams):
             m = np.exp(4 * π ** 2 * i * α * (f - self.f0) ** 2)
             beam.mask(M=lambda xs: m)
@@ -180,7 +187,7 @@ class PolyBeam:
         :raises RuntimeError: if any of the component beams is not planar
         """
         if any([np.isfinite(b.Rp) for b in self.beams]):
-            raise RuntimeError(ERROR.transform)
+            raise RuntimeError(ERROR.transform_nonplanar)
 
         self.Et = np.roll(self.get_field_frequency(), self.Nf // 2, axis=1)
         with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nf)):
@@ -390,13 +397,13 @@ class PolyBeam:
 
     def _plot_line(self, values, title, label, versus):  # todo: fix non-matching x positions
         if any([np.isfinite(b.Rp) for b in self.beams]):
-            raise RuntimeError(ERROR.section)
+            raise RuntimeError(ERROR.plot_nonplanar)
 
         versus_values = getattr(self, versus.attribute) * versus.scale
         plt.plot(versus_values, values)
         plt.xlim(versus_values[0], versus_values[-1])
         plt.title(title)
-        plt.gcf().canvas.set_window_title('-'.join((title + versus.title).lower().split()))
+        plt.gcf().canvas.set_window_title('-'.join(title.lower().split() + [versus.title.lower()]))
         plt.xlabel(versus.label)
         plt.ylabel(label)
         plt.show()
@@ -404,14 +411,14 @@ class PolyBeam:
     def _plot_cmap(self, values, title, label, versus):
         with color_palette('husl'):
             if any([np.isfinite(b.Rp) for b in self.beams]):
-                raise RuntimeError(ERROR.section)
+                raise RuntimeError(ERROR.plot_nonplanar)
 
             versus_values = getattr(self, versus.attribute) * versus.scale
             wx = self.Dx / 2 * PLOT.position.scale
 
             plt.imshow(values, aspect='auto', extent=[versus_values[0], versus_values[-1], -wx, wx])
             plt.title(title)
-            plt.gcf().canvas.set_window_title('-'.join((title + versus.title).lower().split()))
+            plt.gcf().canvas.set_window_title('-'.join(title.lower().split() + [versus.title.lower()]))
             plt.xlabel(versus.label)
             plt.ylabel(PLOT.position.label)
             plt.colorbar().set_label(label)

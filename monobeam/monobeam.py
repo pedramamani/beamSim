@@ -55,9 +55,11 @@ class MonoBeam:
         :return: MonoBeam object for chaining
         """
         α = np.deg2rad(α)
-        if self.dx >= (self.λ / (2 * np.sin(np.abs(α))) if α != 0 else np.inf):
-            raise RuntimeError(ERROR.rotation.format(
-                np.ceil(np.log2(self.Nx * self.dx * 2 * np.sin(np.abs(α)) / self.λ))))
+        if self.dx >= (self.λ / (2 * np.sin(np.abs(α))) if α != 0 else np.inf):  # require: 2dx sin(|α|) < λ
+            raise RuntimeError(ERROR.rotate_aliasing.format(
+                np.rad2deg(np.arcsin(self.λ / (2 * self.dx))),
+                np.ceil(np.log2(self.Dx * 2 * np.sin(np.abs(α)) / self.λ)),
+                self.λ * self.Nx / (2 * np.sin(np.abs(α)) * self.Δx)))
         self._add_phase(np.tan(α) * self.xs)
         return self
 
@@ -259,6 +261,7 @@ class MonoBeam:
             print(PLOT.spherical.format(title, self.Rp * 1E2))
 
         plt.plot(np.roll(self.xs, self.Nx // 2) * PLOT.position.scale, ys)
+        plt.gcf().canvas.set_window_title('-'.join(title.lower().split()))
         plt.title(title)
         plt.xlabel(xlabel=PLOT.position.label)
         plt.ylabel(ylabel=label)

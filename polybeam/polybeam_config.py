@@ -31,9 +31,12 @@ class PRE:  # unit prefixes
 
 
 class ERROR:
-    transform = 'Transform failed since some of the cross-sections are not planar.'
-    section = 'Cannot plot since some of the cross-sections are not planar.'
-    dispersion = 'Some frequency components don\'t have a first-order diffraction for these grating parameters.'
+    transform_nonplanar = 'Transform failed since some of the cross-sections are not planar.'
+    plot_nonplanar = 'Cannot plot since some of the cross-sections are not planar.'
+    disperse = 'Some frequency components don\'t have a first-order diffraction for these grating parameters.'
+    chirp_alias = 'Chirp causes phase aliasing. Make any of the following changes to relieve:\n' \
+                  'α < {:.0f}ps² or Nf >= 2^{:.0f} or ηf < {:.1f}.'
+
 
 
 class WRAP:
@@ -54,7 +57,7 @@ class WRAP:
     propagate = Method(Type.modifier, '', 'Propagate Δz={Δz:.1f}cm')
     lens = Method(Type.modifier, '', 'Apply lens f={f:.1f}cm')
     disperse = Method(Type.modifier, '', 'Disperse d={d:d}mm⁻¹, α={α:.1f}°')
-    chirp = Method(Type.modifier, '', 'Add chirp α={α:.1f}fs²')
+    chirp = Method(Type.modifier, '', 'Add chirp α={α:.1f}ps²')
 
     get_field_time = Method(Type.getter, 'Et', 'Get temporal field')
     get_phase_time = Method(Type.getter, 'φt', 'Get temporal phase')
@@ -79,7 +82,7 @@ class PLOT:
 
     position = Variable('Position', 'x (mm)', 1 / PRE.m, 'xs')
     frequency = Variable('Frequency', 'f (THz)', 1 / PRE.T, 'fs')
-    time = Variable('Time', 't (fs)', 1 / PRE.f, 'ts')
+    time = Variable('Time', 't (ps)', 1 / PRE.p, 'ts')
     phase = Variable('Phase Profile', 'φ (rad)', 1, 'φs')
     amplitude = Variable('Amplitude Profile', 'A (V/m)', 1, 'As')
     field = Variable('Field Values', 'E (V/m)', 1, 'Es')
