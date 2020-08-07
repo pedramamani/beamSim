@@ -1,16 +1,17 @@
 from pathlib import Path
 from os import path
+from dataclasses import dataclass
 
 i = complex(0, 1)
 c = 2.9979E8
 π = 3.14159
 μ0 = 1.2566E-6
 
-ηx = 32
 ηR = 2  # todo: should be set dynamically?
-δz = 1E-4
+DEFAULT_ηx = 16
 DEFAULT_Nx = 2 ** 16
 DEFAULT_I0 = 1  # (TW/m²)
+δz = 1E-4
 
 ASSETS_DIR = Path(path.dirname(__file__)) / 'monobeam_assets'
 WISDOM_FILE = 'pyfftw_wisdom_{}'
@@ -24,33 +25,29 @@ class PRE:
 
 
 class ERROR:
-    ROTATION = 'Rotation introduces phase aliasing. Decrease rotation angle or increase sampling to 2^{:.0f}.'
+    rotation = 'Rotation introduces phase aliasing. Decrease rotation angle or increase position sampling to 2^{:.0f}.'
 
 
 class PROPAGATOR:
-    IN2IN = (True, True)
-    IN2OUT = (True, False)
-    OUT2IN = (False, True)
-    OUT2OUT = (False, False)
+    in_to_in = (True, True)
+    in_to_out = (True, False)
+    out_to_in = (False, True)
+    out_to_out = (False, False)
 
 
 class PLOT:
-    POSITION_LABEL = 'x (mm)'
-    POSITION_SCALE = 1 / PRE.m
+    @dataclass
+    class Variable:
+        title: str
+        label: str
+        scale: float
 
-    PHASE_TITLE = 'Phase Profile'
-    PHASE_LABEL = 'φ (rad)'
+    position = Variable('', 'x (mm)', 1 / PRE.m)
+    phase = Variable('Phase Profile', 'φ (rad)', 1)
+    amplitude = Variable('Amplitude Profile', 'A (V/m)', 1)
+    field = Variable('Field Values', 'E (V/m)', 1)
+    intensity = Variable('Intensity Profile', 'I (GW/m²)', 1 / PRE.G)
+    wigner = Variable('Wigner Distribution', '', 1)
 
-    AMPLITUDE_TITLE = 'Amplitude Profile'
-    AMPLITUDE_LABEL = 'A (V/m)'
-    AMPLITUDE_SCALE = 1
-
-    INTENSITY_TITLE = 'Intensity Profile'
-    INTENSITY_LABEL = 'I (GW/m²)'
-    INTENSITY_SCALE = 1 / PRE.G
-
-    LOG_PLANAR = 'Plotting "{}" on planar cross-section.'
-    LOG_SPHERICAL = 'Plotting "{}" on spherical cross-section with curvature {:.1f}cm.'
-
-
-
+    planar = 'Plotting "{}" on planar cross-section.'
+    spherical = 'Plotting "{}" on spherical cross-section with curvature {:.1f}cm.'

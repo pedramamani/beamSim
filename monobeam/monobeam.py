@@ -3,38 +3,48 @@ import matplotlib.pyplot as plt
 from monobeam_config import *
 import pyfftw
 import multiprocessing
-from os import path
-import pickle
-import contextlib
+from common import pyfftw_wisdom
+
+
+def plot(func):  # decorate plotter methods to automagically plot
+    _, variable_name = func.__name__.split('_')
+    method = f'get_{variable_name}'
+    variable = eval(f'PLOT.{variable_name}')
+
+    def decorate(self, title=variable.title, **kwargs):
+        values = np.real(getattr(self, method)(**kwargs)) * variable.scale
+        self._plot(values, title, variable.label)
+        return self
+
+    return decorate
 
 
 class MonoBeam:
-    def __init__(self, ν, Δx, I0=None, Dx=None, Nx=None):
+    def __init__(self, f, Δx, I0=None, ηx=None, Nx=None):
         """
         Specify a coherent monochromatic input beam with a Gaussian cross-sectional profile.
-        :param ν: frequency of beam (THz)
+        :param f: frequency of beam (THz)
         :param Δx: FWHM of the cross-sectional intensity (mm)
         :param I0: beam intensity at its center (TW/m²)
-        :param Dx: width of the sampling region (mm)
+        :param ηx: ratio of sampling region to beam FWHM
         :param Nx: number of points to sample
         """
         pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 
-        ν *= PRE.T
-        Δx *= PRE.m
-        I0 = (I0 or DEFAULT_I0) * PRE.T
-        Dx = Dx * PRE.m if Dx else ηx * Δx
-        self.Nx = Nx or DEFAULT_Nx
+        self.f = f * PRE.T
+        self.Δx = Δx * PRE.m
+        self.I0 = (DEFAULT_I0 if I0 is None else I0) * PRE.T
+        self.Dx = (DEFAULT_ηx if ηx is None else ηx) * self.Δx
+        self.Nx = DEFAULT_Nx if Nx is None else Nx
 
-        self.dx = Dx / self.Nx
-        self.xs = np.roll(np.arange(self.Nx) - self.Nx // 2, self.Nx // 2) * self.dx
-
-        self.λ = c / ν
+        self.dx = self.Dx / self.Nx
+        self.xs = np.roll(np.arange(start=-self.Dx / 2, stop=self.Dx / 2, step=self.dx), self.Nx // 2)
+        self.λ = c / self.f
         self.Rp = np.inf
         self.z = 0
         self.z0 = 0
-        self.w0 = Δx / np.sqrt(2 * np.log(2))
-        E0 = np.sqrt(2 * μ0 * I0)
+        self.w0 = self.Δx / np.sqrt(2 * np.log(2))
+        E0 = np.sqrt(2 * μ0 * self.I0)
         self.E = np.asarray(E0 * np.exp(-self.xs ** 2 / self.w0 ** 2), dtype=np.complex128)
 
     def rotate(self, α):
@@ -46,7 +56,7 @@ class MonoBeam:
         """
         α = np.deg2rad(α)
         if self.dx >= (self.λ / (2 * np.sin(np.abs(α))) if α != 0 else np.inf):
-            raise RuntimeError(ERROR.ROTATION.format(
+            raise RuntimeError(ERROR.rotation.format(
                 np.ceil(np.log2(self.Nx * self.dx * 2 * np.sin(np.abs(α)) / self.λ))))
         self._add_phase(np.tan(α) * self.xs)
         return self
@@ -59,7 +69,7 @@ class MonoBeam:
         """
         # M0 = np.complex(M(0))
         # φ0 = np.arctan2(M0.imag, M0.real)  # shift phases to keep center phase unchanged
-        self.E = np.multiply(self.E, M(self.xs / PRE.m)) # * np.exp(-φ0))
+        self.E = np.multiply(self.E, M(self.xs / PRE.m))  # * np.exp(-φ0))
         return self
 
     def propagate(self, Δz):
@@ -73,13 +83,13 @@ class MonoBeam:
         dw = self.z - self.z0
         propagator = (np.isinf(self.Rp), np.abs(dw + Δz) < ηR * zR)
 
-        if propagator == PROPAGATOR.IN2IN:
+        if propagator == PROPAGATOR.in_to_in:
             self._propagate_p2p(Δz=Δz)
-        elif propagator == PROPAGATOR.IN2OUT:
+        elif propagator == PROPAGATOR.in_to_out:
             self._propagate_p2p(Δz=-dw)
             self._propagate_w2s(Δz=Δz + dw)
             self.Rp = Δz + dw
-        elif propagator == PROPAGATOR.OUT2IN:
+        elif propagator == PROPAGATOR.out_to_in:
             self._propagate_s2w(Δz=-dw)
             self._propagate_p2p(Δz=Δz + dw)
             self.Rp = np.inf
@@ -121,11 +131,11 @@ class MonoBeam:
         propagator = (np.isinf(self.Rp), np.abs(dw) < ηR * zR)
         Rp = np.inf if propagator[1] else dw
 
-        if propagator == PROPAGATOR.IN2IN:
+        if propagator == PROPAGATOR.in_to_in:
             a = 1 / f
-        elif propagator == PROPAGATOR.IN2OUT:
+        elif propagator == PROPAGATOR.in_to_out:
             a = 1 / f + 1 / Rp
-        elif propagator == PROPAGATOR.OUT2IN:
+        elif propagator == PROPAGATOR.out_to_in:
             a = 1 / f - 1 / self.Rp
         else:
             a = 1 / f - 1 / self.Rp + 1 / Rp
@@ -136,53 +146,63 @@ class MonoBeam:
         self.Rp = Rp
         return self
 
-    def get_phase_section(self):
+    def get_phase(self):
         """
         :return: Beam phase profile (cross-section plane may be spherical)
         """
-        φs = np.roll(np.arctan2(self.E.imag, self.E.real), self.Nx // 2)
-        φsu = np.unwrap(φs)
-        φsu += φs[self.Nx // 2] - φsu[self.Nx // 2]  # unwrapping should leave center phase unchanged
-        return φsu
+        φ = np.roll(np.arctan2(self.E.imag, self.E.real), self.Nx // 2)
+        φu = np.unwrap(φ)
+        φu += φ[self.Nx // 2] - φu[self.Nx // 2]  # unwrapping should leave center phase unchanged
+        return φu
 
-    def get_amplitude_section(self):
+    def get_amplitude(self):
         """
         :return: Beam amplitude profile (cross-section plane may be spherical)
         """
         return np.roll(np.abs(self.E), self.Nx // 2)
 
-    def get_intensity_section(self):
+    def get_field(self):
+        """
+        :return: Beam field profile (cross-section plane may be spherical)
+        """
+        return np.roll(self.E, self.Nx // 2)
+
+    def get_intensity(self):
         """
         :return: Beam intensity profile (cross-section plane may be spherical)
         """
         return np.roll(np.abs(self.E) ** 2 / (2 * μ0), self.Nx // 2)
 
-    def plot_phase_section(self, title=PLOT.PHASE_TITLE):
+    @plot
+    def plot_phase(self, title=PLOT.phase.title):
         """
         Plot beam phase profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
-        self._plot_section(ys=self.get_phase_section(), title=title, label=PLOT.PHASE_LABEL)
-        return self
 
-    def plot_amplitude_section(self, title=PLOT.AMPLITUDE_TITLE):
+    @plot
+    def plot_amplitude(self, title=PLOT.amplitude.title):
         """
         Plot beam amplitude profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
-        self._plot_section(ys=self.get_amplitude_section() * PLOT.AMPLITUDE_SCALE, title=title, label=PLOT.AMPLITUDE_LABEL)
-        return self
 
-    def plot_intensity_section(self, title=PLOT.INTENSITY_TITLE):
+    @plot
+    def plot_field(self):
+        """
+        Plot beam real field values (cross-section plane may be spherical)
+        :return: MonoBeam object for chaining
+        """
+
+    @plot
+    def plot_intensity(self, title=PLOT.intensity.title):
         """
         Plot beam intensity profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
-        self._plot_section(ys=self.get_intensity_section() * PLOT.INTENSITY_SCALE, title=title, label=PLOT.INTENSITY_LABEL)
-        return self
 
     def _add_phase(self, Δz):
         self.E *= np.where(self.E != 0, np.exp(-2 * π * i * Δz / self.λ), 0)
@@ -222,36 +242,24 @@ class MonoBeam:
         self.z += Δz
 
     def _compute_fftw(self, direction):
-        with self._pyfftw_wisdom():
+        with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nx)):
             fftw = pyfftw.FFTW(self.E, self.E, direction=direction, flags=['FFTW_UNALIGNED', 'FFTW_ESTIMATE'])
             self.E = fftw() * (1 / np.sqrt(self.Nx) if direction == 'FFTW_FORWARD' else np.sqrt(self.Nx))
 
     @staticmethod
     def _nudge(x, y):
-        if np.abs(x - y) < δz:
+        if np.isclose(x, y, rtol=δz):
             return y
         return x
 
-    @contextlib.contextmanager
-    def _pyfftw_wisdom(self):
-        wisdom_path = ASSETS_DIR / WISDOM_FILE.format(self.Nx)
-        if path.exists(wisdom_path):
-            with open(wisdom_path, 'rb') as file:
-                pyfftw.import_wisdom(pickle.load(file))
-            yield
-        else:
-            yield
-            with open(wisdom_path, 'wb') as file:
-                pickle.dump(pyfftw.export_wisdom(), file, 2)
-
-    def _plot_section(self, ys, title, label):
+    def _plot(self, ys, title, label):
         if np.isinf(self.Rp):
-            print(PLOT.LOG_PLANAR.format(title))
+            print(PLOT.planar.format(title))
         else:
-            print(PLOT.LOG_SPHERICAL.format(title, self.Rp * 1E2))
+            print(PLOT.spherical.format(title, self.Rp * 1E2))
 
-        plt.plot(np.roll(self.xs, self.Nx // 2) * PLOT.POSITION_SCALE, ys)
+        plt.plot(np.roll(self.xs, self.Nx // 2) * PLOT.position.scale, ys)
         plt.title(title)
-        plt.xlabel(xlabel=PLOT.POSITION_LABEL)
+        plt.xlabel(xlabel=PLOT.position.label)
         plt.ylabel(ylabel=label)
         plt.show()

@@ -3,92 +3,147 @@ import matplotlib.pyplot as plt
 from seaborn import color_palette
 from monobeam import MonoBeam
 from polybeam_config import *
+from common import pyfftw_wisdom
 import pyfftw
 import multiprocessing
-import pickle
 import time
-import contextlib
 import gc
+import warnings
+
+
+def log_and_cache(func):  # decorate class methods to log their execution and cache their output
+    def decorate(self, *args, **kwargs):
+        method = eval(f'WRAP.{func.__name__}')
+        if method.type == WRAP.Type.getter:
+            index = len(self.history) - 1
+            while index >= 0:
+                method_hist = self.history[index]
+                if method_hist.type:
+                    break
+                if method_hist is method:
+                    return getattr(self, method.attribute)
+                index -= 1
+
+        start_time = time.time()
+        func(self, *args, **kwargs)
+        if VERBOSE and method.type != WRAP.Type.getter:
+            print(method.message.format(**kwargs), WRAP.time.format(time.time() - start_time))
+        self.history.append(method)
+        gc.collect()
+
+        if method.type == WRAP.Type.modifier:
+            return self
+        elif method.type == WRAP.Type.getter:
+            return getattr(self, method.attribute)
+
+    return decorate
+
+
+def plot(func):  # decorate plotter methods to automagically plot
+    _, variable_name, versus_name = func.__name__.split('_')
+    method = f'get_{variable_name}_{versus_name}'
+    variable = eval(f'PLOT.{variable_name}')
+    versus = eval(f'PLOT.{versus_name}')
+
+    def decorate(self, title=variable.title, cmap=PLOT_CMAP, **kwargs):
+        values = np.real(getattr(self, method)(**kwargs))
+        if cmap:
+            vs = values * variable.scale
+            self._plot_cmap(vs, title, variable.label, versus)
+        else:
+            vs = values[self.Nx // 2] * variable.scale
+            self._plot_line(vs, title, variable.label, versus)
+        return self
+
+    return decorate
 
 
 class PolyBeam:
-    def __init__(self, ν0, Δν, Δx, Dν=None, Nν=None, Dx=None, Nx=None, I0=None, do_log=True):
+    @log_and_cache
+    def __init__(self, f0, Δf, Δx, ηf=None, Nf=None, ηx=None, Nx=None, I0=None):
         """
         Specify a polychromatic input beam with a Gaussian cross-sectional profile and spectral envelope.
-        :param ν0: central frequency of the beam (THz)
-        :param Δν: FWHM of the spectral intensity (THz)
+        :param f0: central frequency of the beam (THz)
+        :param Δf: FWHM of the spectral intensity (THz)
         :param Δx: FWHM of the cross-sectional intensity (mm)
-        :param Dν: width of the spectral sampling region (THz)
-        :param Nν: number of points to sample in the beam
-        :param Dx: width of the cross-sectional sampling region (mm)
-        :param Nx: number of points to sample in the cross-section
+        :param ηf: ratio of sampling region to beam FWHM in frequency
+        :param Nf: number of points to sample in frequency
+        :param ηx: ratio of sampling region to beam FWHM in position
+        :param Nx: number of points to sample in position
         :param I0: beam intensity at its center (TW/m²)
-        :param do_log: whether to print beam operations and their runtimes
         """
-        self.do_log = do_log
-        with self._log(LOG.INIT.format(ν0, Δν, Δx)):
-            pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
+        pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 
-            self.ν0 = ν0 * PRE.T
-            self.Dν = (Dν or ην * Δν) * PRE.T
-            self.Nν = Nν or DEFAULT_Nν
-            self.Nx = Nx or DEFAULT_Nx
-            self.dν = self.Dν / self.Nν
-            self.νs = np.linspace(start=self.ν0 - self.Dν / 2, stop=self.ν0 + self.Dν / 2, num=self.Nν)
+        self.f0 = f0 * PRE.T
+        self.Δf = Δf * PRE.T
+        self.Δx = Δx * PRE.m
+        self.Df = (DEFAULT_ηf if ηf is None else ηf) * self.Δf
+        self.Nf = DEFAULT_Nf if Nf is None else Nf
+        self.Dx = (DEFAULT_ηx if ηx is None else ηx) * self.Δx
+        self.Nx = DEFAULT_Nx if Nx is None else Nx
+        I0 = DEFAULT_I0 if I0 is None else I0  # (TW/m²)
 
-            self.Et = np.ndarray(shape=(self.Nx, self.Nν), dtype=np.complex128)
-            self.history = []
-            self.beams = []
+        self.df = self.Df / self.Nf
+        self.fs = np.arange(start=self.f0 - self.Df / 2, stop=self.f0 + self.Df / 2, step=self.df)
+        self.ts = np.arange(start=-1 / (2 * self.df), stop=1 / (2 * self.df), step=1 / self.Df)
 
-            for ν in self.νs:
-                ν /= PRE.T
-                I = (I0 or DEFAULT_I0) * np.exp(-4 * np.log(2) * ((ν0 - ν) / Δν) ** 2)
-                self.beams.append(MonoBeam(ν=ν, Δx=Δx, I0=I, Dx=(Dx or ηx * Δx), Nx=self.Nx))
+        self.beams = []
+        for f in self.fs:
+            I = I0 * np.exp(-4 * np.log(2) * ((self.f0 - f) / self.Δf) ** 2)
+            self.beams.append(MonoBeam(f=f / PRE.T, Δx=Δx, I0=I, ηx=self.Dx / self.Δx, Nx=self.Nx))
 
+        self.Et = None
+        self.φt = None
+        self.At = None
+        self.It = None
+        self.Ef = None
+        self.φf = None
+        self.Af = None
+        self.If = None
+        self.W = None
+        self.history = []
+
+    @log_and_cache
     def rotate(self, α):
         """
         Rotate the beam by applying a linear phase in position.
         :param α: angle to rotate by (°)
         :return: PolyBeam object for chaining
         """
-        with self._log(LOG.ROTATE.format(α)):
-            for beam in self.beams:
-                beam.rotate(α=α)
-        return self
+        for beam in self.beams:
+            beam.rotate(α=α)
 
-    def mask(self, M):
+    @log_and_cache
+    def mask(self, M):  # todo: fix mask and rotate for non-planar
         """
         Apply a complex mask to modulate the beam amplitude and phase.
         :param M: mask function that maps list of position (mm) to their complex multiplier
         :return: PolyBeam object for chaining
         """
-        with self._log(LOG.MASK.format(M)):
-            for beam in self.beams:
-                beam.mask(M=M)
-        return self
+        for beam in self.beams:
+            beam.mask(M=M)
 
+    @log_and_cache
     def propagate(self, Δz):
         """
         Propagate the beam in free space.
         :param Δz: distance to propagate by (cm)
         :return: PolyBeam object for chaining
         """
-        with self._log(LOG.PROPAGATE.format(Δz)):
-            for beam in self.beams:
-                beam.propagate(Δz=Δz)
-        return self
+        for beam in self.beams:
+            beam.propagate(Δz=Δz)
 
+    @log_and_cache
     def lens(self, f):
         """
         Simulate the effect of a thin lens on the beam by applying a quadratic phase in position.
         :param f: focal length of the lens (cm)
         :return: PolyBeam object for chaining
         """
-        with self._log(LOG.LENS.format(f)):
-            for beam in self.beams:
-                beam.lens(f=f)
-        return self
+        for beam in self.beams:
+            beam.lens(f=f)
 
+    @log_and_cache
     def disperse(self, d, α):
         """
         Simulate a dispersive first-order diffraction by applying frequency-dependent rotation.
@@ -97,256 +152,267 @@ class PolyBeam:
         :raises RuntimeError: if first order diffraction does not exist for some frequencies
         :return: PolyBeam object for chaining
         """
-        with self._log(LOG.DISPERSE.format(d, α)):
-            δ = PRE.m / d
-            α = np.deg2rad(α)
-            if np.isnan(np.arcsin(c / (self.νs[0] * δ) - np.sin(α)) - np.arcsin(c / (self.νs[-1] * δ) - np.sin(α))):
-                raise RuntimeError(ERROR.DISPERSION)
-            θ0 = np.arcsin(c / (self.ν0 * δ) - np.sin(α))
-            for beam, ν in zip(self.beams, self.νs):
-                beam.rotate(α=np.rad2deg(np.arcsin(c / (ν * δ) - np.sin(α)) - θ0))
-        return self
+        δ = PRE.m / d
+        α = np.deg2rad(α)
+        if np.isnan(np.arcsin(c / (self.fs[0] * δ) - np.sin(α)) - np.arcsin(c / (self.fs[-1] * δ) - np.sin(α))):
+            raise RuntimeError(ERROR.dispersion)
+        θ0 = np.arcsin(c / (self.f0 * δ) - np.sin(α))
+        for beam, f in zip(self.beams, self.fs):
+            beam.rotate(α=np.rad2deg(np.arcsin(c / (f * δ) - np.sin(α)) - θ0))
 
+    @log_and_cache
     def chirp(self, α):
         """
         Apply a quadratic phase shift in frequency to chirp the beam.
         :param α: the chirp rate (fs²)
         :return: PolyBeam object for chaining
         """
-        with self._log(LOG.CHIRP.format(α)):
-            α *= PRE.f ** 2
-            for ν, beam in zip(self.νs, self.beams):
-                m = np.exp(4 * π ** 2 * i * α * (ν - self.ν0) ** 2)
-                beam.mask(M=lambda xs: m)
-        return self
+        α *= PRE.f ** 2
+        for f, beam in zip(self.fs, self.beams):
+            m = np.exp(4 * π ** 2 * i * α * (f - self.f0) ** 2)
+            beam.mask(M=lambda xs: m)
 
-    def get_transform(self):
+    @log_and_cache
+    def get_field_time(self):
         """
-        Fourier transform beam from frequency to time domain and centers it.
-        :return: beam complex amplitude in time domain for all positions
+        Fourier transform beam from frequency to time domain and center it.
+        :return: beam complex field values in time across its cross-section after removing the carrier frequency
         :raises RuntimeError: if any of the component beams is not planar
         """
-        if self.history[-1] == LOG.TRANSFORM:
-            return self.Et
+        if any([np.isfinite(b.Rp) for b in self.beams]):
+            raise RuntimeError(ERROR.transform)
 
-        with self._log(LOG.TRANSFORM):
-            if any([np.isfinite(b.Rp) for b in self.beams]):
-                raise RuntimeError(ERROR.TRANSFORM)
+        self.Et = np.roll(self.get_field_frequency(), self.Nf // 2, axis=1)
+        with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nf)):
+            for j, E in enumerate(self.Et):
+                fftw = pyfftw.FFTW(E, E, direction='FFTW_BACKWARD', flags=['FFTW_UNALIGNED', 'FFTW_ESTIMATE'])
+                self.Et[j] = fftw() * np.sqrt(self.Nf)
+        self.Et = np.roll(self.Et, self.Nf // 2, axis=1)
 
-            for j, beam in enumerate(self.beams):
-                self.Et[:, j] = beam.E
-            with self._pyfftw_wisdom():
-                for j, E in enumerate(self.Et):
-                    fftw = pyfftw.FFTW(E, E, direction='FFTW_BACKWARD', flags=['FFTW_UNALIGNED', 'FFTW_ESTIMATE'])
-                    self.Et[j] = fftw() * np.sqrt(self.Nν)
-            self.Et = np.roll(np.roll(self.Et, self.Nν // 2 - np.argmax(self.Et) % self.Nν), self.Nx // 2, axis=0)
-        return self.Et
-
-    def get_phase_time(self, do_filter=True):
+    @log_and_cache
+    def get_phase_time(self, filter_=FILTER_PHASE):
         """
-        Get beam temporal phase profile for its cross-section after subtracting carrier frequencies.
-        :param do_filter: whether to filter phase values with low amplitude
-        :return: PolyBeam object for chaining
+        :param filter_: whether to filter phase values with low amplitude
+        :return: beam temporal phase profile across its cross-section after removing the carrier frequency
         """
-        Et = self.get_transform()
-        φs = np.arctan2(Et.imag, Et.real)
-        φsu = np.unwrap(φs, axis=1)
+        Et = self.get_field_time()
+        φt = np.arctan2(Et.imag, Et.real)
+        self.φt = np.unwrap(φt, axis=1)
         for j in np.arange(self.Nx):
-            φsu[j] += φs[j][self.Nν // 2] - φsu[j][self.Nν // 2]  # unwrapping should leave center phase unchanged
+            self.φt[j] += φt[j][self.Nf // 2] - self.φt[j][self.Nf // 2]  # unwrapping should not change center phase
+        if filter_:
+            self.φt = np.where(np.abs(Et) > np.amax(np.abs(Et)) * ε, self.φt, np.nan)
 
-        # cs = np.polyfit(np.arange(self.Nν), φsu[self.Nx // 2], 1)  # subtract linear changes
-        # for j in np.arange(self.Nx):
-        #     φsu[j] -= cs[1] + cs[0] * np.arange(self.Nν)
-
-        if do_filter:
-            φsu = np.where(np.abs(Et) > np.amax(np.abs(Et)) * ςE, φsu, np.nan)
-        return φsu
-
+    @log_and_cache
     def get_amplitude_time(self):
         """
-        Get beam temporal amplitude profile for its cross-section.
-        :return: PolyBeam object for chaining
+        :return: beam temporal amplitude profile across its cross-section
         """
-        return np.abs(self.get_transform())
+        self.At = np.abs(self.get_field_time())
 
+    @log_and_cache
     def get_intensity_time(self):
         """
-        Get beam temporal intensity profile for its cross-section.
-        :return: PolyBeam object for chaining
+        :return: beam temporal intensity profile across its cross-section
         """
-        return np.abs(self.get_transform()) ** 2 / (2 * μ0)
+        self.It = np.abs(self.get_field_time()) ** 2 / (2 * μ0)
 
-    def get_phase_freq(self, do_filter=True):
+    @log_and_cache
+    def get_field_frequency(self):
         """
-        Get beam spectral phase profile for its cross-section.
-        :param do_filter: whether to filter values with low amplitude
-        :return: PolyBeam object for chaining
+        :return: beam complex field values in frequency across its cross-section
         """
-        φs = [b.get_phase_section() for b in self.beams]
-        if do_filter:
-            As = [b.get_amplitude_section() for b in self.beams]
-            φs = np.where(As > np.amax(As) * ςE, φs, np.nan)
-        return φs
+        self.Ef = np.transpose([b.get_field() for b in self.beams])
 
-    def get_amplitude_freq(self):
+    @log_and_cache
+    def get_phase_frequency(self, filter_=FILTER_PHASE):
         """
-        Get beam spectral amplitude profile for its cross-section.
-        :return: PolyBeam object for chaining
+        :param filter_: whether to filter values with low amplitude
+        :return: beam spectral phase profile across its cross-section
         """
-        return [b.get_amplitude_section() for b in self.beams]
+        φf = np.transpose([b.get_phase() for b in self.beams])
+        self.φf = np.unwrap(φf, axis=1)
+        for j in np.arange(self.Nx):
+            self.φf[j] += φf[j][self.Nf // 2] - self.φf[j][self.Nf // 2]  # unwrapping should not change center phase
+        if filter_:
+            Af = self.get_amplitude_frequency()
+            self.φf = np.where(Af > np.amax(Af) * ε, self.φf, np.nan)
 
-    def get_intensity_freq(self):
+    @log_and_cache
+    def get_amplitude_frequency(self):
         """
-        Get beam spectral intensity profile for its cross-section.
-        :return: PolyBeam object for chaining
+        :return: beam spectral amplitude profile across its cross-section
         """
-        return [b.get_intensity_section() for b in self.beams]
+        self.Af = np.transpose([b.get_amplitude() for b in self.beams])
 
+    @log_and_cache
+    def get_intensity_frequency(self):
+        """
+        :return: beam spectral intensity profile across its cross-section
+        """
+        self.If = np.transpose([b.get_intensity() for b in self.beams])
+
+    @log_and_cache
     def get_wigner(self):
         """
-        Get the Wigner distribution of the central beam at position x=0.
-        :return: PolyBeam object for chaining
+        :return: Wigner distribution of the central beam at position x=0
         """
-        Et = np.pad(self.get_transform()[self.Nx // 2], pad_width=self.Nν, constant_values=0)
-        W = np.ndarray(shape=(self.Nν, self.Nν), dtype=np.complex128)
+        E = self.get_field_time()[self.Nx // 2]
+        Et = np.pad(E, (0, self.Nf))
+        Es = np.pad(np.flip(np.conj(E)), (0, self.Nf))
+        self.W = np.ndarray(shape=(self.Nf, self.Nf), dtype=np.complex128)
 
-        for t in range(self.Nν):
-            for s in range(self.Nν):
-                W[t][s] = Et[t + s + self.Nν] * np.conj(Et[t - s + self.Nν]) / (2 * μ0)
+        for t in range(self.Nf):
+            self.W[t] = np.multiply(Et[t: t + self.Nf], Es[-t + self.Nf - 1: -t + 2 * self.Nf - 1]) / (2 * μ0)
 
-        with self._pyfftw_wisdom():
-            for t, Wt in enumerate(W):
+        with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nf)):
+            for t, Wt in enumerate(self.W):
                 fftw = pyfftw.FFTW(Wt, Wt, direction='FFTW_FORWARD', flags=['FFTW_UNALIGNED', 'FFTW_ESTIMATE'])
-                W[t] = fftw() / np.sqrt(self.Nν)
-        return np.abs(np.roll(np.transpose(W[self.Nν // 4: 3 * self.Nν // 4]), self.Nν // 2, axis=0))
+                self.W[t] = fftw() / np.sqrt(self.Nf)
+        self.W = np.roll(self.W.T, self.Nf // 2, axis=0)
 
-    def plot_phase_time(self, title=PLOT.PHASE_TITLE, do_filter=True):
+    @plot
+    def plot_field_time(self, title=None, cmap=None):
         """
-        Plot beam temporal phase profile for its cross-section after subtracting carrier frequencies.
+        Plot beam real field values in time after removing the carrier frequency.
         :param title: title of the plot
-        :param do_filter: whether to filter values with low amplitude
+        :param cmap: whether to plot a color map across beam cross-section or only the central field values
         :return: PolyBeam object for chaining
         """
-        self._plot_time(vs=self.get_phase_time(do_filter=do_filter), title=title, label=PLOT.PHASE_LABEL)
-        return self
 
-    def plot_amplitude_time(self, title=PLOT.AMPLITUDE_TITLE):
+    @plot
+    def plot_phase_time(self, title=None, cmap=None, filter_=None):
         """
-        Plot beam temporal amplitude profile for its cross-section.
+        Plot beam temporal phase profile after subtracting entral carrier frequency.
         :param title: title of the plot
+        :param filter_: whether to filter values with low amplitude
+        :param cmap: whether to plot a color map across beam cross-section or only the central phase values
         :return: PolyBeam object for chaining
         """
-        self._plot_time(vs=self.get_amplitude_time() * PLOT.AMPLITUDE_SCALE, title=title, label=PLOT.AMPLITUDE_LABEL)
-        return self
 
-    def plot_intensity_time(self, title=PLOT.AMPLITUDE_TITLE):
+    @plot
+    def plot_amplitude_time(self, title=None, cmap=None):
         """
-        Plot beam temporal intensity profile for its cross-section.
+        Plot beam temporal amplitude profile.
         :param title: title of the plot
+        :param cmap: whether to plot a color map across beam cross-section or only the central amplitude values
         :return: PolyBeam object for chaining
         """
-        self._plot_time(vs=self.get_intensity_time() * PLOT.INTENSITY_SCALE, title=title, label=PLOT.INTENSITY_LABEL)
-        return self
 
-    def plot_phase_freq(self, title=PLOT.PHASE_TITLE, do_filter=True):
+    @plot
+    def plot_intensity_time(self, title=None, cmap=None):
         """
-        Plot beam spectral phase profile for its cross-section.
+        Plot beam temporal intensity profile.
         :param title: title of the plot
-        :param do_filter: whether to filter values with low amplitude
+        :param cmap: whether to plot a color map across beam cross-section or only the central intensity values
         :return: PolyBeam object for chaining
         """
-        self._plot_freq(vs=self.get_phase_freq(do_filter=do_filter), title=title, label=PLOT.PHASE_LABEL)
-        return self
 
-    def plot_amplitude_freq(self, title=PLOT.AMPLITUDE_TITLE):
+    @plot
+    def plot_field_frequency(self, title=None, cmap=None):
         """
-        Plot beam spectral amplitude profile for its cross-section.
+        Plot beam real field values in frequency.
         :param title: title of the plot
+        :param cmap: whether to plot a color map across beam cross-section or only the central field values
         :return: PolyBeam object for chaining
         """
-        self._plot_freq(vs=self.get_amplitude_freq() * PLOT.AMPLITUDE_SCALE, title=title, label=PLOT.AMPLITUDE_LABEL)
-        return self
 
-    def plot_intensity_freq(self, title=PLOT.AMPLITUDE_TITLE):
+    @plot
+    def plot_phase_frequency(self, title=None, cmap=None, filter_=None):
         """
-        Plot beam spectral intensity profile for its cross-section.
+        Plot beam spectral phase profile.
         :param title: title of the plot
+        :param filter_: whether to filter values with low amplitude
+        :param cmap: whether to plot a color map across beam cross-section or only the central phase values
         :return: PolyBeam object for chaining
         """
-        self._plot_freq(vs=self.get_intensity_freq() * PLOT.INTENSITY_SCALE, title=title, label=PLOT.INTENSITY_LABEL)
-        return self
 
-    def plot_wigner(self, title=PLOT.WIGNER_TITLE):
+    @plot
+    def plot_amplitude_frequency(self, title=None, cmap=None):
+        """
+        Plot beam spectral amplitude profile.
+        :param title: title of the plot
+        :param cmap: whether to plot a color map across beam cross-section or only the central amplitude values
+        :return: PolyBeam object for chaining
+        """
+
+    @plot
+    def plot_intensity_frequency(self, title=None, cmap=None):
+        """
+        Plot beam spectral intensity profile.
+        :param title: title of the plot
+        :param cmap: whether to plot a color map across beam cross-section or only the central intensity values
+        :return: PolyBeam object for chaining
+        """
+
+    def plot_wigner(self, title=PLOT.wigner.title):
         """
         Plot the Wigner distribution of the central beam at position x=0.
         :param title: title of the plot
         :return: PolyBeam object for chaining
         """
         with color_palette('husl'):
-            wt = 1 / (2 * self.dν) * PLOT.TIME_SCALE
-            Rν = (self.νs[0] * PLOT.FREQUENCY_SCALE, self.νs[-1] * PLOT.FREQUENCY_SCALE)
+            Rt = (self.ts[0] * PLOT.time.scale, self.ts[-1] * PLOT.time.scale)
+            Rf = (self.fs[0] * PLOT.frequency.scale, self.fs[-1] * PLOT.frequency.scale)
+            W = self.get_wigner() * PLOT.intensity.scale
+            It = np.abs(np.sum(W, axis=0))
+            If = np.abs(np.sum(W, axis=1))
 
-            plt.imshow(self.get_wigner() * PLOT.INTENSITY_SCALE, aspect='auto', extent=[-wt, wt, *Rν])
-            plt.gcf().canvas.set_window_title(PLOT.SAVE_WIGNER(title))
-            plt.title(title)
-            plt.xlabel(xlabel=PLOT.TIME_LABEL)
-            plt.ylabel(ylabel=PLOT.FREQUENCY_LABEL)
-            plt.colorbar().set_label(PLOT.INTENSITY_LABEL)
-            plt.show()
+            fig = plt.figure()
+            area_main = fig.add_axes([0.1, 0.12, 0.86, 0.8])
+            area_main.set_title(title)
+            area_main.set_axis_off()
+
+            gs = fig.add_gridspec(2, 2, width_ratios=(5, 1), height_ratios=(1, 5),
+                                  left=0.12, right=0.81, bottom=0.12, top=0.9, wspace=0.02, hspace=0.02)
+            area_W = fig.add_subplot(gs[1, 0])
+            area_It = fig.add_subplot(gs[0, 0])
+            area_If = fig.add_subplot(gs[1, 1])
+
+            cmap = area_W.imshow(np.abs(W), aspect='auto', extent=[*Rt, *Rf])
+            area_W.set_xlabel(PLOT.time.label)
+            area_W.set_ylabel(PLOT.frequency.label)
+            plt.colorbar(cmap, ax=area_main).set_label(PLOT.intensity.label)
+
+            area_If.plot(If, self.fs * PLOT.frequency.scale, 'b')
+            area_If.set_xticks([])
+            area_If.set_yticks([])
+
+            area_It.plot(self.ts * PLOT.time.scale, It, 'b')
+            area_It.set_xticks([])
+            area_It.set_yticks([])
+
+            plt.gcf().canvas.set_window_title('-'.join(title.lower().split()))
+            with warnings.catch_warnings():  # matplotlib throws a UserWarning that I can't fix!
+                warnings.simplefilter('ignore')
+                plt.show()
         return self
 
-    def _plot_freq(self, vs, title, label):  # todo: fix the non-matching x positions
+    def _plot_line(self, values, title, label, versus):  # todo: fix non-matching x positions
+        if any([np.isfinite(b.Rp) for b in self.beams]):
+            raise RuntimeError(ERROR.section)
+
+        versus_values = getattr(self, versus.attribute) * versus.scale
+        plt.plot(versus_values, values)
+        plt.xlim(versus_values[0], versus_values[-1])
+        plt.title(title)
+        plt.gcf().canvas.set_window_title('-'.join((title + versus.title).lower().split()))
+        plt.xlabel(versus.label)
+        plt.ylabel(label)
+        plt.show()
+
+    def _plot_cmap(self, values, title, label, versus):
         with color_palette('husl'):
             if any([np.isfinite(b.Rp) for b in self.beams]):
-                raise RuntimeError(ERROR.SECTION)
+                raise RuntimeError(ERROR.section)
 
-            wx = self.beams[0].dx * self.Nx / 2 * PLOT.POSITION_SCALE
-            Rν = (self.νs[0] * PLOT.FREQUENCY_SCALE, self.νs[-1] * PLOT.FREQUENCY_SCALE)
+            versus_values = getattr(self, versus.attribute) * versus.scale
+            wx = self.Dx / 2 * PLOT.position.scale
 
-            plt.imshow(np.transpose(vs), aspect='auto', extent=[*Rν, -wx, wx])
+            plt.imshow(values, aspect='auto', extent=[versus_values[0], versus_values[-1], -wx, wx])
             plt.title(title)
-            plt.gcf().canvas.set_window_title(PLOT.SAVE_FREQ(title))
-            plt.xlabel(xlabel=PLOT.FREQUENCY_LABEL)
-            plt.ylabel(ylabel=PLOT.POSITION_LABEL)
+            plt.gcf().canvas.set_window_title('-'.join((title + versus.title).lower().split()))
+            plt.xlabel(versus.label)
+            plt.ylabel(PLOT.position.label)
             plt.colorbar().set_label(label)
             plt.show()
-
-    def _plot_time(self, vs, title, label):
-        with color_palette('husl'):
-            if any([np.isfinite(b.Rp) for b in self.beams]):
-                raise RuntimeError(ERROR.SECTION)
-
-            wt = 1 / (2 * self.dν) * PLOT.TIME_SCALE
-            wx = self.beams[0].dx * self.Nx / 2 * PLOT.POSITION_SCALE
-
-            plt.imshow(vs, aspect='auto', extent=[-wt, wt, -wx, wx])
-            plt.gcf().canvas.set_window_title(PLOT.SAVE_TIME(title))
-            plt.title(title)
-            plt.xlabel(xlabel=PLOT.TIME_LABEL)
-            plt.ylabel(ylabel=PLOT.POSITION_LABEL)
-            plt.colorbar().set_label(label)
-            plt.show()
-
-    @contextlib.contextmanager
-    def _pyfftw_wisdom(self):
-        wisdom_path = ASSETS_DIR / WISDOM_FILE.format(self.Nν)
-        if path.exists(wisdom_path):
-            with open(wisdom_path, 'rb') as file:
-                pyfftw.import_wisdom(pickle.load(file))
-            yield
-        else:
-            yield
-            with open(wisdom_path, 'wb') as file:
-                pickle.dump(pyfftw.export_wisdom(), file, 2)
-
-    @contextlib.contextmanager
-    def _log(self, message):
-        if self.do_log:
-            print(message + LOG.WAIT, end='')
-            start_time = time.time()
-            yield
-            print(LOG.TIME.format(time.time() - start_time))
-        else:
-            yield
-        self.history.append(message)
-        gc.collect()
