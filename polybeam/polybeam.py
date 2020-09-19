@@ -132,6 +132,7 @@ class PolyBeam:
         """
         for beam in self.beams:
             beam.propagate(Δz=Δz)
+        self.Dx = self.beams[self.Nf // 2].Dx
 
     @log_and_cache
     def lens(self, f):
@@ -267,10 +268,15 @@ class PolyBeam:
         E = self.get_field_time()[self.Nx // 2]
         Et = np.pad(E, (0, self.Nf))
         Es = np.pad(np.flip(np.conj(E)), (0, self.Nf))
+
+        plt.plot(np.pad(np.real(E), (self.Nf, self.Nf)))
+        plt.show()
+
         self.W = np.ndarray(shape=(self.Nf, self.Nf), dtype=np.complex128)
 
         for t in range(self.Nf):
-            self.W[t] = np.multiply(Et[t: t + self.Nf], Es[-t + self.Nf - 1: -t + 2 * self.Nf - 1]) / (2 * μ0)
+            self.W[t] = np.multiply(Et[t: t + self.Nf], Es[self.Nf - t - 1: 2 * self.Nf - t - 1]) / (2 * μ0)
+            # self.W[t] = np.multiply(E[t: t + self.Nf], E[self.Nf - t - 1: 2 * self.Nf - t - 1]) / (2 * μ0)
 
         with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nf)):
             for t, Wt in enumerate(self.W):
@@ -376,16 +382,18 @@ class PolyBeam:
             area_It = fig.add_subplot(gs[0, 0])
             area_If = fig.add_subplot(gs[1, 1])
 
-            cmap = area_W.imshow(np.abs(W), aspect='auto', extent=[*Rt, *Rf])
+            cmap = area_W.imshow(np.abs(W), aspect='auto', extent=[*Rt, *Rf], interpolation='none')
             area_W.set_xlabel(PLOT.time.label)
             area_W.set_ylabel(PLOT.frequency.label)
             plt.colorbar(cmap, ax=area_main).set_label(PLOT.intensity.label)
 
             area_If.plot(If, self.fs * PLOT.frequency.scale, 'b')
+            area_If.margins(y=0)
             area_If.set_xticks([])
             area_If.set_yticks([])
 
             area_It.plot(self.ts * PLOT.time.scale, It, 'b')
+            area_It.margins(x=0)
             area_It.set_xticks([])
             area_It.set_yticks([])
 
@@ -416,7 +424,8 @@ class PolyBeam:
             versus_values = getattr(self, versus.attribute) * versus.scale
             wx = self.Dx / 2 * PLOT.position.scale
 
-            plt.imshow(values, aspect='auto', extent=[versus_values[0], versus_values[-1], -wx, wx])
+            plt.imshow(values, aspect='auto', extent=[versus_values[0], versus_values[-1], -wx, wx],
+                       interpolation='none')
             plt.title(title)
             plt.gcf().canvas.set_window_title('-'.join(title.lower().split() + [versus.title.lower()]))
             plt.xlabel(versus.label)

@@ -69,9 +69,9 @@ class MonoBeam:
         :param M: mask function that maps a given position to its complex multiplier (mm → ℂ)
         :return: MonoBeam object for chaining
         """
-        # M0 = np.complex(M(0))
-        # φ0 = np.arctan2(M0.imag, M0.real)  # shift phases to keep center phase unchanged
-        self.E = np.multiply(self.E, M(self.xs / PRE.m))  # * np.exp(-φ0))
+        M0 = np.complex(M(0))
+        φ0 = np.arctan2(M0.imag, M0.real)  # shift phase values to keep center phase unchanged
+        self.E = np.multiply(self.E, M(self.xs / PRE.m) * np.exp(-φ0))
         return self
 
     def propagate(self, Δz):
@@ -228,12 +228,14 @@ class MonoBeam:
 
         dx = self.λ * np.abs(Δz) / (self.dx * self.Nx)
         self.xs *= dx / self.dx
+        self.Dx *= dx / self.dx
         self.dx = dx
         self.z += Δz
 
     def _propagate_s2w(self, Δz):
         dx = self.λ * np.abs(Δz) / (self.dx * self.Nx)
         self.xs *= dx / self.dx
+        self.Dx *= dx / self.dx
         self.dx = dx
         if Δz >= 0:
             self._compute_fftw(direction='FFTW_FORWARD')
