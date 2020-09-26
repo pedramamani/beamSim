@@ -6,6 +6,7 @@ i = complex(0, 1)
 c = 2.9979E8
 π = 3.14159
 μ0 = 1.2566E-6
+ε = 1E-5  # small threshold value to filter phases with small amplitude
 
 ηR = 2  # todo: should be set dynamically?
 DEFAULT_ηx = 16
@@ -16,6 +17,8 @@ DEFAULT_I0 = 1  # (TW/m²)
 ASSETS_DIR = Path(path.dirname(__file__)) / 'monobeam_assets'
 WISDOM_FILE = 'pyfftw_wisdom_{}'
 
+FILTER_PHASE = False
+
 
 class PRE:
     c = 1E-2
@@ -25,30 +28,30 @@ class PRE:
 
 
 class ERROR:
-    rotate_aliasing = 'Rotation causes phase aliasing. Make any of the following changes to relieve:\n' \
+    ROTATE_ALIAS = 'Rotation causes phase aliasing. Make any of the following changes to relieve:\n' \
                       '|α| < {:.1f}° or Nx >= 2^{:.0f} or ηx < {:.1f}.'
 
 
 class PROPAGATOR:
-    in_to_in = (True, True)
-    in_to_out = (True, False)
-    out_to_in = (False, True)
-    out_to_out = (False, False)
+    IN_TO_IN = (True, True)
+    IN_TO_OUT = (True, False)
+    OUT_TO_IN = (False, True)
+    OUT_TO_OUT = (False, False)
 
 
 class PLOT:
     @dataclass
     class Variable:
-        title: str
-        label: str
-        scale: float
+        TITLE: str
+        LABEL: str
+        SCALE: float
 
-    position = Variable('', 'x (mm)', 1 / PRE.m)
-    phase = Variable('Phase Profile', 'φ (rad)', 1)
-    amplitude = Variable('Amplitude Profile', 'A (V/m)', 1)
-    field = Variable('Field Values', 'E (V/m)', 1)
-    intensity = Variable('Intensity Profile', 'I (GW/m²)', 1 / PRE.G)
-    wigner = Variable('Wigner Distribution', '', 1)
+    POSITION = Variable('', 'x (mm)', 1 / PRE.m)
+    PHASE = Variable('Phase Profile', 'φ (rad)', 1)
+    AMPLITUDE = Variable('Amplitude Profile', 'A (V/m)', 1)
+    FIELD = Variable('Field Values', 'E (V/m)', 1)
+    INTENSITY = Variable('Intensity Profile', 'I (GW/m²)', 1 / PRE.G)
+    WIGNER = Variable('Wigner Distribution', '', 1)
 
-    planar = 'Plotting "{}" on planar cross-section.'
-    spherical = 'Plotting "{}" on spherical cross-section with curvature {:.1f}cm.'
+    PLANAR_WARN = 'Plotting "{}" on planar cross-section.'
+    SPHERICAL_WARN = 'Plotting "{}" on spherical cross-section with curvature {:.1f}cm.'

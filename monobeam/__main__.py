@@ -9,7 +9,7 @@ def shaper_4f_routine():
     beam.propagate(Δz=30).lens(f=30).propagate(Δz=60).lens(f=30).propagate(Δz=30)
     beam.rotate(α=3)
 
-    beam.plot_intensity(title='Output Intensity').plot_phase(title='Output Phase')
+    beam.plot_intensity(title='Output Intensity').plot_phase(title='Output Phase', filter_=True)
 
 
 if __name__ == '__main__':

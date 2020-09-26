@@ -14,7 +14,7 @@ def routine_4f_shaper(M):
     beam.propagate(Δz=30).lens(f=30).propagate(Δz=30)
     beam.disperse(d=1500, α=45)  # negative dispersion to collimate beam
 
-    beam.plot_intensity_frequency(cmap=False)  # .plot_phase_frequency()
+    beam.plot_intensity_frequency()  # .plot_phase_frequency()
     # beam.plot_intensity_time()  # .plot_phase_time()
     beam.plot_wigner()
 

@@ -11,9 +11,9 @@ def plot(func):  # decorate plotter methods to automagically plot
     method = f'get_{variable_name}'
     variable = eval(f'PLOT.{variable_name}')
 
-    def decorate(self, title=variable.title, **kwargs):
-        values = np.real(getattr(self, method)(**kwargs)) * variable.scale
-        self._plot(values, title, variable.label)
+    def decorate(self, title=variable.TITLE, **kwargs):
+        values = np.real(getattr(self, method)(**kwargs)) * variable.SCALE
+        self._plot(values, title, variable.LABEL)
         return self
 
     return decorate
@@ -56,7 +56,7 @@ class MonoBeam:
         """
         α = np.deg2rad(α)
         if self.dx >= (self.λ / (2 * np.sin(np.abs(α))) if α != 0 else np.inf):  # require: 2dx sin(|α|) < λ
-            raise RuntimeError(ERROR.rotate_aliasing.format(
+            raise RuntimeError(ERROR.ROTATE_ALIAS.format(
                 np.rad2deg(np.arcsin(self.λ / (2 * self.dx))),
                 np.ceil(np.log2(self.Dx * 2 * np.sin(np.abs(α)) / self.λ)),
                 self.λ * self.Nx / (2 * np.sin(np.abs(α)) * self.Δx)))
@@ -85,13 +85,13 @@ class MonoBeam:
         dw = self.z - self.z0
         propagator = (np.isinf(self.Rp), np.abs(dw + Δz) < ηR * zR)
 
-        if propagator == PROPAGATOR.in_to_in:
+        if propagator == PROPAGATOR.IN_TO_IN:
             self._propagate_p2p(Δz=Δz)
-        elif propagator == PROPAGATOR.in_to_out:
+        elif propagator == PROPAGATOR.IN_TO_OUT:
             self._propagate_p2p(Δz=-dw)
             self._propagate_w2s(Δz=Δz + dw)
             self.Rp = Δz + dw
-        elif propagator == PROPAGATOR.out_to_in:
+        elif propagator == PROPAGATOR.OUT_TO_IN:
             self._propagate_s2w(Δz=-dw)
             self._propagate_p2p(Δz=Δz + dw)
             self.Rp = np.inf
@@ -133,11 +133,11 @@ class MonoBeam:
         propagator = (np.isinf(self.Rp), np.abs(dw) < ηR * zR)
         Rp = np.inf if propagator[1] else dw
 
-        if propagator == PROPAGATOR.in_to_in:
+        if propagator == PROPAGATOR.IN_TO_IN:
             a = 1 / f
-        elif propagator == PROPAGATOR.in_to_out:
+        elif propagator == PROPAGATOR.IN_TO_OUT:
             a = 1 / f + 1 / Rp
-        elif propagator == PROPAGATOR.out_to_in:
+        elif propagator == PROPAGATOR.OUT_TO_IN:
             a = 1 / f - 1 / self.Rp
         else:
             a = 1 / f - 1 / self.Rp + 1 / Rp
@@ -148,13 +148,16 @@ class MonoBeam:
         self.Rp = Rp
         return self
 
-    def get_phase(self):
+    def get_phase(self, filter_=FILTER_PHASE):
         """
         :return: Beam phase profile (cross-section plane may be spherical)
         """
-        φ = np.roll(np.arctan2(self.E.imag, self.E.real), self.Nx // 2)
+        E = self.get_field()
+        φ = np.arctan2(E.imag, E.real)
         φu = np.unwrap(φ)
         φu += φ[self.Nx // 2] - φu[self.Nx // 2]  # unwrapping should leave center phase unchanged
+        if filter_:
+            φu = np.where(np.abs(E) > np.amax(np.abs(E)) * ε, φu, np.nan)
         return φu
 
     def get_amplitude(self):
@@ -175,36 +178,44 @@ class MonoBeam:
         """
         return np.roll(np.abs(self.E) ** 2 / (2 * μ0), self.Nx // 2)
 
-    @plot
-    def plot_phase(self, title=PLOT.phase.title):
+    def plot_phase(self, title=PLOT.PHASE.TITLE, filter_=FILTER_PHASE):
         """
         Plot beam phase profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
+        values = self.get_phase(filter_=filter_) * PLOT.PHASE.SCALE
+        self._plot(values, title, PLOT.PHASE.LABEL)
+        return self
 
-    @plot
-    def plot_amplitude(self, title=PLOT.amplitude.title):
+    def plot_amplitude(self, title=PLOT.AMPLITUDE.TITLE):
         """
         Plot beam amplitude profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
+        values = self.get_amplitude() * PLOT.AMPLITUDE.SCALE
+        self._plot(values, title, PLOT.AMPLITUDE.LABEL)
+        return self
 
-    @plot
-    def plot_field(self):
+    def plot_field(self, title=PLOT.FIELD.TITLE):
         """
         Plot beam real field values (cross-section plane may be spherical)
         :return: MonoBeam object for chaining
         """
+        values = self.get_field() * PLOT.FIELD.SCALE
+        self._plot(values, title, PLOT.FIELD.LABEL)
+        return self
 
-    @plot
-    def plot_intensity(self, title=PLOT.intensity.title):
+    def plot_intensity(self, title=PLOT.INTENSITY.TITLE):
         """
         Plot beam intensity profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
+        values = self.get_intensity() * PLOT.INTENSITY.SCALE
+        self._plot(values, title, PLOT.INTENSITY.LABEL)
+        return self
 
     def _add_phase(self, Δz):
         self.E *= np.where(self.E != 0, np.exp(-2 * π * i * Δz / self.λ), 0)
@@ -258,13 +269,13 @@ class MonoBeam:
 
     def _plot(self, ys, title, label):
         if np.isinf(self.Rp):
-            print(PLOT.planar.format(title))
+            print(PLOT.PLANAR_WARN.format(title))
         else:
-            print(PLOT.spherical.format(title, self.Rp * 1E2))
+            print(PLOT.SPHERICAL_WARN.format(title, self.Rp / PRE.c))
 
-        plt.plot(np.roll(self.xs, self.Nx // 2) * PLOT.position.scale, ys)
+        plt.plot(np.roll(self.xs, self.Nx // 2) * PLOT.POSITION.SCALE, ys)
         plt.gcf().canvas.set_window_title('-'.join(title.lower().split()))
         plt.title(title)
-        plt.xlabel(xlabel=PLOT.position.label)
+        plt.xlabel(xlabel=PLOT.POSITION.LABEL)
         plt.ylabel(ylabel=label)
         plt.show()
