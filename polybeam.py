@@ -2,8 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from seaborn import color_palette
 from monobeam import MonoBeam
-from polybeam_config import *
-from common import pyfftw_wisdom
+from config import *
 import pyfftw
 import multiprocessing
 import time
@@ -11,30 +10,37 @@ import gc
 import warnings
 
 
+DEFAULT_ηf = 16
+DEFAULT_ηx = 4
+DEFAULT_Nf = 2 ** 9
+DEFAULT_Nx = 2 ** 12
+DEFAULT_I0 = 1  # (TW/m²)
+
+
 class PolyBeam:
-    def __init__(self, f0, f_fwhm, x_fwhm, f_ratio=None, nf=None, x_ratio=None, nx=None, intensity=None):
+    def __init__(self, f0, Δf, Δx, ηf=None, Nf=None, ηx=None, Nx=None, I0=None):
         """
         Specify a polychromatic input beam with a Gaussian cross-sectional profile and spectral envelope.
         :param f0: central frequency of the beam (THz)
-        :param f_fwhm: FWHM of the spectral intensity (THz)
-        :param x_fwhm: FWHM of the cross-sectional intensity (mm)
-        :param f_ratio: ratio of sampling region to beam FWHM in frequency
-        :param nf: number of points to sample in frequency
-        :param x_ratio: ratio of sampling region to beam FWHM in position
-        :param nx: number of points to sample in position
-        :param intensity: beam intensity at its center (TW/m²)
+        :param Δf: FWHM of the spectral intensity (THz)
+        :param Δx: FWHM of the cross-sectional intensity (mm)
+        :param ηf: ratio of sampling region to beam FWHM in frequency
+        :param Nf: number of points to sample in frequency
+        :param ηx: ratio of sampling region to beam FWHM in position
+        :param Nx: number of points to sample in position
+        :param I0: beam intensity at its center (TW/m²)
         """
         start_time = time.time()
         pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 
         self.f0 = f0 * PRE.T
-        self.f_fwhm = f_fwhm * PRE.T
-        self.x_fwhm = x_fwhm * PRE.m
-        self.Df = (DEFAULT_ηf if f_ratio is None else f_ratio) * self.f_fwhm
-        self.Nf = DEFAULT_Nf if nf is None else nf
-        self.Dx = (DEFAULT_ηx if x_ratio is None else x_ratio) * self.x_fwhm
-        self.Nx = DEFAULT_Nx if nx is None else nx
-        intensity = DEFAULT_I0 if intensity is None else intensity  # (TW/m²)
+        self.Δf = Δf * PRE.T
+        self.Δx = Δx * PRE.m
+        self.Df = (DEFAULT_ηf if ηf is None else ηf) * self.Δf
+        self.Nf = DEFAULT_Nf if Nf is None else Nf
+        self.Dx = (DEFAULT_ηx if ηx is None else ηx) * self.Δx
+        self.Nx = DEFAULT_Nx if Nx is None else Nx
+        I0 = DEFAULT_I0 if I0 is None else I0  # (TW/m²)
 
         self.df = self.Df / self.Nf
         self.fs = np.arange(start=self.f0 - self.Df / 2, stop=self.f0 + self.Df / 2, step=self.df)
@@ -42,52 +48,52 @@ class PolyBeam:
 
         self.beams = []
         for f in self.fs:
-            I = intensity * np.exp(-4 * np.log(2) * ((self.f0 - f) / self.f_fwhm) ** 2)
-            self.beams.append(MonoBeam(f=f / PRE.T, Δx=x_fwhm, I0=I, ηx=self.Dx / self.x_fwhm, Nx=self.Nx))
+            I = I0 * np.exp(-4 * np.log(2) * ((self.f0 - f) / self.Δf) ** 2)
+            self.beams.append(MonoBeam(f=f / PRE.T, Δx=Δx, I0=I, ηx=self.Dx / self.Δx, Nx=self.Nx))
 
         self.Et = None
-        self.phase_t = None
+        self.φt = None
         self.At = None
         self.It = None
         self.Ef = None
-        self.phase_f = None
+        self.φf = None
         self.Af = None
         self.If = None
         self.W = None
         self.history = []
         
         if VERBOSE:
-            print(LOG.INIT.format(f0, f_fwhm, x_fwhm), LOG.TIME.format(time.time() - start_time))
+            print(LOG.INIT.format(f0, Δf, Δx), LOG.TIME.format(time.time() - start_time))
         self.history.append('init')
         gc.collect()
 
-    def rotate(self, angle):
+    def rotate(self, α):
         """
         Rotate the beam by applying a linear phase in position.
-        :param angle: angle to rotate by (°)
+        :param α: angle to rotate by (°)
         :return: PolyBeam object for chaining
         """
         start_time = time.time()
         
         for beam in self.beams:
-            beam.rotate(α=angle)
+            beam.rotate(α=α)
         
         if VERBOSE:
-            print(LOG.ROTATE.format(angle), LOG.TIME.format(time.time() - start_time))
+            print(LOG.ROTATE.format(α), LOG.TIME.format(time.time() - start_time))
         self.history.append('rotate')
         gc.collect()
         return self
 
-    def mask(self, mask):  # todo: fix mask and rotate for non-planar
+    def mask(self, M):  # todo: fix mask and rotate for non-planar
         """
         Apply a complex mask to modulate the beam amplitude and phase.
-        :param mask: mask function that maps list of position (mm) to their complex multiplier
+        :param M: mask function that maps list of position (mm) to their complex multiplier
         :return: PolyBeam object for chaining
         """
         start_time = time.time()
 
         for beam in self.beams:
-            beam.mask(M=mask)
+            beam.mask(M=M)
 
         if VERBOSE:
             print(LOG.MASK, LOG.TIME.format(time.time() - start_time))
@@ -95,20 +101,20 @@ class PolyBeam:
         gc.collect()
         return self
 
-    def propagate(self, distance):
+    def propagate(self, Δz):
         """
         Propagate the beam in free space.
-        :param distance: distance to propagate by (cm)
+        :param Δz: distance to propagate by (cm)
         :return: PolyBeam object for chaining
         """
         start_time = time.time()
         
         for beam in self.beams:
-            beam.propagate(Δz=distance)
+            beam.propagate(Δz=Δz)
         self.Dx = self.beams[self.Nf // 2].Dx
         
         if VERBOSE:
-            print(LOG.PROPAGATE.format(distance), LOG.TIME.format(time.time() - start_time))
+            print(LOG.PROPAGATE.format(Δz), LOG.TIME.format(time.time() - start_time))
         self.history.append('propagate')
         gc.collect()
         return self
@@ -130,11 +136,11 @@ class PolyBeam:
         gc.collect()
         return self
 
-    def disperse(self, d, angle):
+    def disperse(self, d, α):
         """
         Simulate a dispersive first-order diffraction by applying frequency-dependent rotation.
         :param d: grating groove density (1/mm)
-        :param angle: incident beam angle (°)
+        :param α: incident beam angle (°)
         :raises RuntimeError: if first order diffraction does not exist for some frequencies
         :raises RuntimeError: if phase aliasing occurs upon dispersion
         :return: PolyBeam object for chaining
@@ -142,40 +148,40 @@ class PolyBeam:
         start_time = time.time()
 
         δ = PRE.m / d
-        angle = np.deg2rad(angle)
-        if np.isnan(np.arcsin(c / (self.fs[0] * δ) - np.sin(angle)) - np.arcsin(c / (self.fs[-1] * δ) - np.sin(angle))):
+        α = np.deg2rad(α)
+        if np.isnan(np.arcsin(c / (self.fs[0] * δ) - np.sin(α)) - np.arcsin(c / (self.fs[-1] * δ) - np.sin(α))):
             raise RuntimeError(ERROR.DISPERSE)
-        θ0 = np.arcsin(c / (self.f0 * δ) - np.sin(angle))
+        θ0 = np.arcsin(c / (self.f0 * δ) - np.sin(α))
         for beam, f in zip(self.beams, self.fs):
-            beam.rotate(α=np.rad2deg(np.arcsin(c / (f * δ) - np.sin(angle)) - θ0))
+            beam.rotate(α=np.rad2deg(np.arcsin(c / (f * δ) - np.sin(α)) - θ0))
 
         if VERBOSE:
-            print(LOG.DISPRESE.format(d, angle), LOG.TIME.format(time.time() - start_time))
+            print(LOG.DISPERSE.format(d, α), LOG.TIME.format(time.time() - start_time))
         self.history.append('disperse')
         gc.collect()
         return self
 
-    def chirp(self, rate):
+    def chirp(self, r):
         """
         Apply a quadratic phase shift in frequency to chirp the beam.
-        :param rate: the chirp rate (ps²)
+        :param r: the chirp rate (ps²)
         :return: PolyBeam object for chaining
         """
         start_time = time.time()
 
-        rate *= PRE.p ** 2
-        if self.Nf < 4 * π * rate * self.Df ** 2:  # require: 4πα Df^2 < Nf
+        r *= PRE.p ** 2
+        if self.Nf < 4 * π * r * self.Df ** 2:  # require: 4πα Df^2 < Nf
             raise RuntimeError(ERROR.CHIRP_ALIAS.format(
                 self.Nf / (4 * π * self.Df ** 2) / PRE.f ** 2,
-                np.ceil(np.log2(4 * π * rate * self.Df ** 2)),
-                np.sqrt(self.Nf / (4 * π * rate)) / self.f_fwhm))
+                np.ceil(np.log2(4 * π * r * self.Df ** 2)),
+                np.sqrt(self.Nf / (4 * π * r)) / self.Δf))
 
         for f, beam in zip(self.fs, self.beams):
-            m = np.exp(4 * π ** 2 * i * rate * (f - self.f0) ** 2)
+            m = np.exp(4 * π ** 2 * i * r * (f - self.f0) ** 2)
             beam.mask(M=lambda xs: m)
 
         if VERBOSE:
-            print(LOG.CHIRP.format(rate), LOG.TIME.format(time.time() - start_time))
+            print(LOG.CHIRP.format(r / PRE.p ** 2), LOG.TIME.format(time.time() - start_time))
         self.history.append('chirp')
         gc.collect()
         return self
@@ -217,21 +223,21 @@ class PolyBeam:
         while index >= 0:
             method = self.history[index]
             if method == 'get_phase_time':
-                return self.phase_t
+                return self.φt
             elif method in LOG.MODIFIERS:
                 break
             index -= 1
         
         Et = self.get_field_time()
         φt = np.arctan2(Et.imag, Et.real)
-        self.phase_t = np.unwrap(φt, axis=1)
+        self.φt = np.unwrap(φt, axis=1)
         for j in np.arange(self.Nx):
-            self.phase_t[j] += φt[j][self.Nf // 2] - self.phase_t[j][self.Nf // 2]  # unwrapping should not change center phase
+            self.φt[j] += φt[j][self.Nf // 2] - self.φt[j][self.Nf // 2]  # unwrapping should not change center phase
         if filter_:
-            self.phase_t = np.where(np.abs(Et) > np.amax(np.abs(Et)) * ε, self.phase_t, np.nan)
+            self.φt = np.where(np.abs(Et) > np.amax(np.abs(Et)) * ε, self.φt, np.nan)
 
         self.history.append('get_phase_time')
-        return self.phase_t
+        return self.φt
 
     def get_amplitude_time(self):
         """
@@ -296,21 +302,21 @@ class PolyBeam:
         while index >= 0:
             method = self.history[index]
             if method == 'get_phase_frequency':
-                return self.phase_f
+                return self.φf
             elif method in LOG.MODIFIERS:
                 break
             index -= 1
 
         φf = np.transpose([b.get_phase() for b in self.beams])
-        self.phase_f = np.unwrap(φf, axis=1)
+        self.φf = np.unwrap(φf, axis=1)
         for j in np.arange(self.Nx):
-            self.phase_f[j] += φf[j][self.Nf // 2] - self.phase_f[j][self.Nf // 2]  # unwrapping should not change center phase
+            self.φf[j] += φf[j][self.Nf // 2] - self.φf[j][self.Nf // 2]  # unwrapping should not change center phase
         if filter_:
             Af = self.get_amplitude_frequency()
-            self.phase_f = np.where(Af > np.amax(Af) * ε, self.phase_f, np.nan)
+            self.φf = np.where(Af > np.amax(Af) * ε, self.φf, np.nan)
             
         self.history.append('get_phase_frequency')
-        return self.phase_f
+        return self.φf
 
     def get_amplitude_frequency(self):
         """
@@ -364,15 +370,10 @@ class PolyBeam:
         E = self.get_field_time()[self.Nx // 2]
         Et = np.pad(E, (0, self.Nf))
         Es = np.pad(np.flip(np.conj(E)), (0, self.Nf))
-        
-        plt.plot(np.pad(np.real(E), (self.Nf, self.Nf)))
-        plt.show()
-
         self.W = np.ndarray(shape=(self.Nf, self.Nf), dtype=np.complex128)
 
         for t in range(self.Nf):
             self.W[t] = np.multiply(Et[t: t + self.Nf], Es[self.Nf - t - 1: 2 * self.Nf - t - 1]) / (2 * μ0)
-            # self.W[t] = np.multiply(E[t: t + self.Nf], E[self.Nf - t - 1: 2 * self.Nf - t - 1]) / (2 * μ0)
 
         with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nf)):
             for t, Wt in enumerate(self.W):
@@ -502,7 +503,7 @@ class PolyBeam:
             area_W.set_ylabel(PLOT.FREQUENCY.LABEL)
             plt.colorbar(cmap, ax=area_main).set_label(PLOT.INTENSITY.LABEL)
 
-            area_If.plot(If, self.fs * PLOT.FREQUENCY.SCALE, 'b')
+            area_If.plot(If, np.flip(self.fs) * PLOT.FREQUENCY.SCALE, 'b')
             area_If.margins(y=0)
             area_If.set_xticks([])
             area_If.set_yticks([])

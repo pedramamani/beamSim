@@ -1,9 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from monobeam_config import *
 import pyfftw
 import multiprocessing
-from common import pyfftw_wisdom
+from config import *
+
+
+DEFAULT_ηx = 16
+DEFAULT_Nx = 2 ** 16
+DEFAULT_I0 = 1  # (TW/m²)
 
 
 def plot(func):  # decorate plotter methods to automagically plot
@@ -150,6 +154,7 @@ class MonoBeam:
 
     def get_phase(self, filter_=FILTER_PHASE):
         """
+        :param filter_: whether to filter values with low amplitude
         :return: Beam phase profile (cross-section plane may be spherical)
         """
         E = self.get_field()
@@ -182,6 +187,7 @@ class MonoBeam:
         """
         Plot beam phase profile (cross-section plane may be spherical)
         :param title: title of the plot
+        :param filter_: whether to filter values with low amplitude
         :return: MonoBeam object for chaining
         """
         values = self.get_phase(filter_=filter_) * PLOT.PHASE.SCALE
