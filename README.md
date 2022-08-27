@@ -8,4 +8,4 @@ This codebase offers the following beam propagation modules (the latter is built
  ## Quick Start
 Python 3.8 or above is required. Obtain and install it from [python.org](https://www.python.org/downloads/). Set up your virtual environment by following this [guide](https://packaging.python.org/guides/installing-using-pip-and-virtual-environments/) or using a package manager of your choice. Then, install requirements by `pip install -r requirements.txt`.
 
-Test the provided examples by running `python polybeam` or `python monobeam` from terminal. See example code and documentation to help design your own propagation routine.
+Run the examples provided in `__main__.py`. See example code and documentation to help design your own propagation routine.
