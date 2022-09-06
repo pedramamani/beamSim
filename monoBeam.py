@@ -10,19 +10,6 @@ DEFAULT_Nx = 2 ** 16
 DEFAULT_I0 = 1  # (TW/m²)
 
 
-def plot(func):  # decorate plotter methods to automagically plot
-    _, variable_name = func.__name__.split('_')
-    method = f'get_{variable_name}'
-    variable = eval(f'PLOT.{variable_name}')
-
-    def decorate(self, title=variable.TITLE, **kwargs):
-        values = np.real(getattr(self, method)(**kwargs)) * variable.SCALE
-        self._plot(values, title, variable.LABEL)
-        return self
-
-    return decorate
-
-
 class MonoBeam:
     def __init__(self, f, Δx, I0=None, ηx=None, Nx=None):
         """
@@ -64,7 +51,7 @@ class MonoBeam:
                 np.rad2deg(np.arcsin(self.λ / (2 * self.dx))),
                 np.ceil(np.log2(self.Dx * 2 * np.sin(np.abs(α)) / self.λ)),
                 self.λ * self.Nx / (2 * np.sin(np.abs(α)) * self.Δx)))
-        self._add_phase(np.tan(α) * self.xs)
+        self._addPhase(np.tan(α) * self.xs)
         return self
 
     def mask(self, M):
@@ -90,18 +77,18 @@ class MonoBeam:
         propagator = (np.isinf(self.Rp), np.abs(dw + Δz) < ηR * zR)
 
         if propagator == PROPAGATOR.IN_TO_IN:
-            self._propagate_p2p(Δz=Δz)
+            self._propagateP2P(Δz=Δz)
         elif propagator == PROPAGATOR.IN_TO_OUT:
-            self._propagate_p2p(Δz=-dw)
-            self._propagate_w2s(Δz=Δz + dw)
+            self._propagateP2P(Δz=-dw)
+            self._propagateW2S(Δz=Δz + dw)
             self.Rp = Δz + dw
         elif propagator == PROPAGATOR.OUT_TO_IN:
-            self._propagate_s2w(Δz=-dw)
-            self._propagate_p2p(Δz=Δz + dw)
+            self._propagateS2W(Δz=-dw)
+            self._propagateP2P(Δz=Δz + dw)
             self.Rp = np.inf
         else:
-            self._propagate_s2w(Δz=-dw)
-            self._propagate_w2s(Δz=Δz + dw)
+            self._propagateS2W(Δz=-dw)
+            self._propagateW2S(Δz=Δz + dw)
             self.Rp = Δz + dw
         return self
 
@@ -146,18 +133,18 @@ class MonoBeam:
         else:
             a = 1 / f - 1 / self.Rp + 1 / Rp
 
-        self._add_phase(Δz=-np.abs(self.xs) ** 2 * a / 2)
+        self._addPhase(Δz=-np.abs(self.xs) ** 2 * a / 2)
         self.z0 = self.z - dw
         self.w0 = w0
         self.Rp = Rp
         return self
 
-    def get_phase(self, filter_=FILTER_PHASE):
+    def getPhase(self, filter_=FILTER_PHASE):
         """
         :param filter_: whether to filter values with low amplitude
         :return: Beam phase profile (cross-section plane may be spherical)
         """
-        E = self.get_field()
+        E = self.getField()
         φ = np.arctan2(E.imag, E.real)
         φu = np.unwrap(φ)
         φu += φ[self.Nx // 2] - φu[self.Nx // 2]  # unwrapping should leave center phase unchanged
@@ -165,83 +152,83 @@ class MonoBeam:
             φu = np.where(np.abs(E) > np.amax(np.abs(E)) * ε, φu, np.nan)
         return φu
 
-    def get_amplitude(self):
+    def getAmplitude(self):
         """
         :return: Beam amplitude profile (cross-section plane may be spherical)
         """
         return np.roll(np.abs(self.E), self.Nx // 2)
 
-    def get_field(self):
+    def getField(self):
         """
         :return: Beam field profile (cross-section plane may be spherical)
         """
         return np.roll(self.E, self.Nx // 2)
 
-    def get_intensity(self):
+    def getIntensity(self):
         """
         :return: Beam intensity profile (cross-section plane may be spherical)
         """
         return np.roll(np.abs(self.E) ** 2 / (2 * μ0), self.Nx // 2)
 
-    def plot_phase(self, title=PLOT.PHASE.TITLE, filter_=FILTER_PHASE):
+    def plotPhase(self, title=PLOT.PHASE.TITLE, filter_=FILTER_PHASE):
         """
         Plot beam phase profile (cross-section plane may be spherical)
         :param title: title of the plot
         :param filter_: whether to filter values with low amplitude
         :return: MonoBeam object for chaining
         """
-        values = self.get_phase(filter_=filter_) * PLOT.PHASE.SCALE
+        values = self.getPhase(filter_=filter_) * PLOT.PHASE.SCALE
         self._plot(values, title, PLOT.PHASE.LABEL)
         return self
 
-    def plot_amplitude(self, title=PLOT.AMPLITUDE.TITLE):
+    def plotAmplitude(self, title=PLOT.AMPLITUDE.TITLE):
         """
         Plot beam amplitude profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
-        values = self.get_amplitude() * PLOT.AMPLITUDE.SCALE
+        values = self.getAmplitude() * PLOT.AMPLITUDE.SCALE
         self._plot(values, title, PLOT.AMPLITUDE.LABEL)
         return self
 
-    def plot_field(self, title=PLOT.FIELD.TITLE):
+    def plotField(self, title=PLOT.FIELD.TITLE):
         """
         Plot beam real field values (cross-section plane may be spherical)
         :return: MonoBeam object for chaining
         """
-        values = self.get_field() * PLOT.FIELD.SCALE
+        values = self.getField() * PLOT.FIELD.SCALE
         self._plot(values, title, PLOT.FIELD.LABEL)
         return self
 
-    def plot_intensity(self, title=PLOT.INTENSITY.TITLE):
+    def plotIntensity(self, title=PLOT.INTENSITY.TITLE):
         """
         Plot beam intensity profile (cross-section plane may be spherical)
         :param title: title of the plot
         :return: MonoBeam object for chaining
         """
-        values = self.get_intensity() * PLOT.INTENSITY.SCALE
+        values = self.getIntensity() * PLOT.INTENSITY.SCALE
         self._plot(values, title, PLOT.INTENSITY.LABEL)
         return self
 
-    def _add_phase(self, Δz):
+    def _addPhase(self, Δz):
         self.E *= np.where(self.E != 0, np.exp(-2 * π * i * Δz / self.λ), 0)
 
-    def _propagate_p2p(self, Δz):
+    def _propagateP2P(self, Δz):
         if np.abs(Δz) < δz:
             return
 
-        self._compute_fftw(direction='FFTW_FORWARD')
+        self._computeFftw(direction='FFTW_FORWARD')
         inverse_squared = np.roll(((np.arange(self.Nx) - self.Nx // 2) / (self.Nx * self.dx)) ** 2, self.Nx // 2)
         self.E *= np.exp((complex(0, 1) * π * self.λ * Δz) * inverse_squared)
-        self._compute_fftw(direction='FFTW_BACKWARD')
+        self._computeFftw(direction='FFTW_BACKWARD')
         self.z += Δz
 
-    def _propagate_w2s(self, Δz):
-        self._add_phase(Δz=self.xs ** 2 / (2 * Δz))
+    def _propagateW2S(self, Δz):
+        self._addPhase(Δz=self.xs ** 2 / (2 * Δz))
         if Δz >= 0:
-            self._compute_fftw(direction='FFTW_FORWARD')
+            self._computeFftw(direction='FFTW_FORWARD')
         else:
-            self._compute_fftw(direction='FFTW_BACKWARD')
+            self._computeFftw(direction='FFTW_BACKWARD')
 
         dx = self.λ * np.abs(Δz) / (self.dx * self.Nx)
         self.xs *= dx / self.dx
@@ -249,21 +236,21 @@ class MonoBeam:
         self.dx = dx
         self.z += Δz
 
-    def _propagate_s2w(self, Δz):
+    def _propagateS2W(self, Δz):
         dx = self.λ * np.abs(Δz) / (self.dx * self.Nx)
         self.xs *= dx / self.dx
         self.Dx *= dx / self.dx
         self.dx = dx
         if Δz >= 0:
-            self._compute_fftw(direction='FFTW_FORWARD')
+            self._computeFftw(direction='FFTW_FORWARD')
         else:
-            self._compute_fftw(direction='FFTW_BACKWARD')
+            self._computeFftw(direction='FFTW_BACKWARD')
 
-        self._add_phase(Δz=self.xs ** 2 / (2 * Δz))
+        self._addPhase(Δz=self.xs ** 2 / (2 * Δz))
         self.z += Δz
 
-    def _compute_fftw(self, direction):
-        with pyfftw_wisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nx)):
+    def _computeFftw(self, direction):
+        with pyfftwWisdom(ASSETS_DIR / WISDOM_FILE.format(self.Nx)):
             fftw = pyfftw.FFTW(self.E, self.E, direction=direction, flags=['FFTW_UNALIGNED', 'FFTW_ESTIMATE'])
             self.E = fftw() * (1 / np.sqrt(self.Nx) if direction == 'FFTW_FORWARD' else np.sqrt(self.Nx))
 

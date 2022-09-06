@@ -82,12 +82,12 @@ class PLOT:
 
 
 @contextlib.contextmanager
-def pyfftw_wisdom(wisdom_path):
-    if path.exists(wisdom_path):
-        with open(wisdom_path, 'rb') as file:
+def pyfftwWisdom(wisdomPath):
+    if path.exists(wisdomPath):
+        with open(wisdomPath, 'rb') as file:
             pyfftw.import_wisdom(pickle.load(file))
         yield
     else:
         yield
-        with open(wisdom_path, 'wb') as file:
+        with open(wisdomPath, 'wb') as file:
             pickle.dump(pyfftw.export_wisdom(), file, 2)
